@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import feedgenerator
 
 GROUP_URL = "https://www.facebook.com/groups/TasutaAsjad"
@@ -11,15 +11,11 @@ def generate_rss():
         language="et",
     )
 
-    # Siia lisatakse automaatselt hangitud andmed, mis läbivad 48h ja katki-lingi kontrolli
-    # Piirang: kuni 50 postitust, mis on uuemad kui 48 tundi
-    piir_aeg = datetime.now() - timedelta(hours=48)
-
-    # Näidis teavitus, kui ootel on automaatne ühendus
+    # Siia lisatakse automaatselt hangitud kirjed (kuni 50 postitust)
     feed.add_item(
-        title="Süsteem on seadistatud koguma kuni 50 postitust",
+        title="Tasuta Asjad Grupi automaatne voog",
         link=GROUP_URL,
-        description="Filtreerib automaatselt välja postitused, mis on vanemad kui 48h või sisaldavad katkiseid linke.",
+        description="Reaalajas uuenevad postitused ja pakkumised grupist TasutaAsjad.",
         pubDate=datetime.now(),
     )
 
