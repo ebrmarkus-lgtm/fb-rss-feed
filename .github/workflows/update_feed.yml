@@ -31,10 +31,12 @@ jobs:
         run: python feed.py
 
       - name: Commit and push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git pull origin main --rebase
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           git add feed.xml
           git commit -m "Uuenda RSS voogu automaatselt" || exit 0
-          git push origin main
+          git push
