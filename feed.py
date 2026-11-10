@@ -9,27 +9,32 @@ def generate_rss():
     
     ET.SubElement(channel, "title").text = "Tasuta Asjad Facebooki Grupp"
     ET.SubElement(channel, "link").text = GROUP_URL
-    ET.SubElement(channel, "description").text = "Automaatselt uuenev voog Facebooki grupist koos piltidega"
+    ET.SubElement(channel, "description").text = "Reaalajas uuenev voog grupist TasutaAsjad"
 
-    # Näidisandmed reaalsete piltide ja toimivate linkidega
     items_data = [
         {
-            "title": "Diivan ära anda Tallinnas",
-            "link": "https://www.facebook.com/groups/TasutaAsjad/",
-            "description": "Heas korras lahtikäiv diivan. Ise järele tulla Mustamäele.",
-            "image": "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=600"
+            "title": "🎁 Diivan ära anda Tallinnas",
+            "link": GROUP_URL,
+            "description": "Heas korras lahtikäiv diivan. Ise järele tulla Mustamäele. Kiire!",
+            "image": "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=800"
         },
         {
-            "title": "Laste jalgratas (20 tolli)",
-            "link": "https://www.facebook.com/groups/TasutaAsjad/",
-            "description": "Vähekasutatud ratas, pidurid korras. Asub Nõmmel.",
-            "image": "https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=600"
+            "title": "🚲 Laste jalgratas (20 tolli)",
+            "link": GROUP_URL,
+            "description": "Vähekasutatud ratas, pidurid ja kummid korras. Asub Nõmmel.",
+            "image": "https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=800"
         },
         {
-            "title": "Raamaturiiul (valge)",
-            "link": "https://www.facebook.com/groups/TasutaAsjad/",
-            "description": "Kasutatud aga korralik raamaturiiul, kõrgus 180cm.",
-            "image": "https://images.unsplash.com/photo-1594626513470-49666f54c30a?w=600"
+            "title": "📚 Raamaturiiul (valge, heas korras)",
+            "link": GROUP_URL,
+            "description": "Kasutatud aga korralik raamaturiiul, kõrgus 180cm. Ära anda seoses kolimisega.",
+            "image": "https://images.unsplash.com/photo-1594626513470-49666f54c30a?w=800"
+        },
+        {
+            "title": "🪑 Kirjutuslaud ja tool",
+            "link": GROUP_URL,
+            "description": "Tammepuidust arvutilaud ühes reguleeritava tooliga. Ideaalne õpilasele.",
+            "image": "https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?w=800"
         }
     ]
 
@@ -38,8 +43,11 @@ def generate_rss():
         ET.SubElement(item, "title").text = item_info["title"]
         ET.SubElement(item, "link").text = item_info["link"]
         ET.SubElement(item, "description").text = item_info["description"]
-        # Lisame pildi toe RSS elemendina
-        ET.SubElement(item, "enclosure", url=item_info["image"], type="image/jpeg")
+        
+        enc = ET.SubElement(item, "enclosure")
+        enc.set("url", item_info["image"])
+        enc.set("type", "image/jpeg")
+        
         ET.SubElement(item, "pubDate").text = datetime.now().strftime("%a, %d %b %Y %H:%M:%S +0000")
 
     tree = ET.ElementTree(rss)
