@@ -11,13 +11,14 @@ def generate_rss():
         language="et",
     )
 
-    # Siia lisatakse automaatselt hangitud kirjed (kuni 50 postitust)
-    feed.add_item(
-        title="Tasuta Asjad Grupi automaatne voog",
-        link=GROUP_URL,
-        description="Reaalajas uuenevad postitused ja pakkumised grupist TasutaAsjad.",
-        pubDate=datetime.now(),
-    )
+    # Lisame näidistena toimivad kirjed, et näeksite kohe mitme postituse kuvamist
+    for i in range(1, 6):
+        feed.add_item(
+            title=f"Tasuta asi nr {i} - Vaata pakkumist",
+            link=f"{GROUP_URL}/permalink/100000{i}/",
+            description=f"See on automaatselt genereeritud kirjeldus ja info toote nr {i} kohta grupis TasutaAsjad.",
+            pubDate=datetime.now(),
+        )
 
     with open("feed.xml", "w", encoding="utf-8") as f:
         f.write(feed.writeString("utf-8"))
