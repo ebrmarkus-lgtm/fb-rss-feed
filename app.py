@@ -1,16 +1,37 @@
-import streamlit as st
-from datetime import datetime
-import urllib.parse
+import os
+import re
 import hashlib
+import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 
-# ==============================================================================
-# Tasuta Asjad Platform - Ultimate Enterprise Edition v4000.0
-# Target: https://www.facebook.com/groups/TasutaAsjad
-# ==============================================================================
+import requests
+import feedparser
+import streamlit as st
+from bs4 import BeautifulSoup
+
+# =============================================================================
+# TASUTA ASJAD PRO — GITHUB / STREAMLIT CLOUD
+# Version 2.0 | Real RSS/Atom data | No fabricated listings
+# =============================================================================
 
 APP_TITLE = "Tasuta Asjad Harjumaal & Tallinnas"
 APP_ICON = "📦"
-TARGET_GROUP_URL = "https://www.facebook.com/groups/TasutaAsjad"
+GROUP_URL = "https://www.facebook.com/groups/TasutaAsjad"
+
+CACHE_TTL = 300
+REQUEST_TIMEOUT = 20
+MAX_POSTS = 500
+LOCAL_TZ = ZoneInfo("Europe/Tallinn")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("tasuta_asjad")
+
+
+# -----------------------------------------------------------------------------
+# PAGE CONFIG
+# -----------------------------------------------------------------------------
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -19,209 +40,676 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Tipptasemel CSS disain (Modernne UI/UX)
 st.markdown("""
-    <style>
-    .main {
-        background-color: #f8f9fa;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    .stCard {
-        background-color: #ffffff;
-        padding: 24px;
-        border-radius: 16px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-        margin-bottom: 24px;
-        border: 1px solid #e2e8f0;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .stCard:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
-    }
-    .badge-group {
-        float: right;
-        font-size: 11px;
-        font-weight: 600;
-        background: #e2e8f0;
-        color: #2d3748;
-        padding: 4px 10px;
-        border-radius: 6px;
-    }
-    .footer-text {
-        text-align: center;
-        color: #6c757d;
-        font-size: 13px;
-        margin-top: 50px;
-        padding: 20px;
-        border-top: 1px solid #e1e4e8;
-    }
-    </style>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+.stApp {
+    background: #f5f7fb;
+}
+
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1450px;
+}
+
+[data-testid="stSidebar"] {
+    background: #ffffff;
+}
+
+[data-testid="stMetric"] {
+    background: #ffffff;
+    border: 1px solid #e5eaf1;
+    padding: 15px;
+    border-radius: 12px;
+}
+
+.listing-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: #172033;
+    margin-bottom: 8px;
+}
+
+.listing-meta {
+    color: #64748b;
+    font-size: 12px;
+    margin-bottom: 12px;
+}
+
+.status-footer {
+    color: #64748b;
+    font-size: 12px;
+    text-align: center;
+    padding: 24px 0;
+    border-top: 1px solid #e5eaf1;
+    margin-top: 40px;
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: white;
+    border-radius: 14px;
+}
+
+a {
+    text-decoration: none;
+}
+</style>
 """, unsafe_allow_html=True)
 
-# Suure jõudlusega optimeeritud andmebaas vahemällu salvestamisega
-@st.cache_data(ttl=900, show_spinner=False)
-def load_enterprise_database():
-    categories = ["Mööbel", "Sporditarbed", "Kodutehnika", "Kontor ja kool", "Riided ja jalatsid", "Ehitusmaterjalid", "Lastekaubad", "Aed ja taimed"]
-    locations = ["Tallinn, Kesklinn", "Tallinn, Mustamäe", "Tallinn, Õismäe", "Tallinn, Lasnamäe", "Tallinn, Nõmme", "Harjumaa, Viimsi", "Harjumaa, Maardu", "Harjumaa, Keila"]
-    images = [
-        "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=800",
-        "https://images.unsplash.com/photo-1485965120184-e220f721d03e?w=800",
-        "https://images.unsplash.com/photo-1594626513470-49666f54c30a?w=800",
-        "https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?w=800",
-        "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=800"
+
+# -----------------------------------------------------------------------------
+# CONFIGURATION
+# -----------------------------------------------------------------------------
+
+def get_secret(name, default=""):
+    """Read Streamlit secrets first, then environment variables."""
+    try:
+        value = st.secrets.get(name, default)
+        if value:
+            return str(value).strip()
+    except Exception:
+        pass
+
+    return os.getenv(name, default).strip()
+
+
+DEFAULT_FEED_URL = get_secret("RSS_FEED_URL")
+
+
+def valid_http_url(url):
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
+
+
+# -----------------------------------------------------------------------------
+# DATA EXTRACTION
+# -----------------------------------------------------------------------------
+
+def clean_html(value):
+    if not value:
+        return ""
+
+    soup = BeautifulSoup(str(value), "html.parser")
+    return re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
+
+
+def extract_image(entry):
+    """Extract an image belonging to the actual RSS item."""
+
+    candidates = []
+
+    # RSS media extensions
+    for field in ("media_content", "media_thumbnail"):
+        values = entry.get(field, [])
+        if isinstance(values, list):
+            for item in values:
+                if isinstance(item, dict):
+                    candidates.append(item.get("url"))
+
+    # Enclosures
+    for item in entry.get("enclosures", []):
+        if isinstance(item, dict):
+            mime = item.get("type", "")
+            href = item.get("href") or item.get("url")
+
+            if mime.startswith("image/") or (
+                href and re.search(r"\.(jpg|jpeg|png|webp)(\?|$)", href, re.I)
+            ):
+                candidates.append(href)
+
+    # HTML inside description / summary / content
+    html_fields = [
+        entry.get("summary", ""),
+        entry.get("description", "")
     ]
-    
-    raw_posts = [
-        {
-            "title": "Diivan ära anda Tallinnas Mustamäel",
-            "description": "Heas korras mugav lahtikäiv diivan. Kangas on terve, mehhanism toimib suurepäraselt. Ise järele tulla esimeselt korruselt. Kiire!",
-            "image": images[0],
-            "category": "Mööbel",
-            "location": "Tallinn, Mustamäe",
-            "date": "Täna 18:00"
-        },
-        {
-            "title": "Laste jalgratas 20 tolli sinine",
-            "description": "Vähekasutatud lasteeratas, pidurid ja käigud on täielikult korras. Sobib lapsele vanuses 6-9 aastat. Asub Nõmmel.",
-            "image": images[1],
-            "category": "Sporditarbed",
-            "location": "Tallinn, Nõmme",
-            "date": "Täna 17:30"
-        },
-        {
-            "title": "Raamaturiiul valge skandinaavia stiilis",
-            "description": "Kasutatud aga korralik ja tugev raamaturiiul, kõrgus 180 cm. Ära anda seoses elukoha vahetuse ja kiire kolimisega.",
-            "image": images[2],
-            "category": "Mööbel",
-            "location": "Harjumaa, Viimsi",
-            "date": "Täna 16:15"
-        },
-        {
-            "title": "Reguleeritav kirjutuslaud ja kontoritool",
-            "description": "Tammepuidust pealispinnaga arvutilaud ühes ergonoomilise reguleeritava tooliga. Ideaalne lahendus õpilasele või kodukontorisse.",
-            "image": images[3],
-            "category": "Kontor ja kool",
-            "location": "Tallinn, Kesklinn",
-            "date": "Täna 15:00"
-        },
-        {
-            "title": "Töötav Samsungi LCD Televiisor 32 tolli",
-            "description": "Ekraan on terve, pilt on selge. Kaasas pult ja voolujuhe. Smart TV funktsiooni pole, aga sobib suurepäraselt suvilasse või teiseks teleriks.",
-            "image": images[4],
-            "category": "Kodutehnika",
-            "location": "Tallinn, Lasnamäe",
-            "date": "Täna 12:00"
-        }
+
+    for content in entry.get("content", []):
+        if isinstance(content, dict):
+            html_fields.append(content.get("value", ""))
+
+    for html in html_fields:
+        if html:
+            soup = BeautifulSoup(str(html), "html.parser")
+            img = soup.find("img")
+
+            if img:
+                candidates.append(
+                    img.get("src") or img.get("data-src")
+                )
+
+    # Only accept valid HTTP(S) images
+    for candidate in candidates:
+        if candidate and valid_http_url(candidate):
+            return candidate
+
+    return None
+
+
+# -----------------------------------------------------------------------------
+# AUTOMATIC CATEGORY DETECTION
+# -----------------------------------------------------------------------------
+
+CATEGORY_RULES = {
+    "Mööbel": [
+        "diivan", "laud", "tool", "riiul", "kapp",
+        "voodi", "madrats", "mööbel", "tugitool"
+    ],
+    "Sporditarbed": [
+        "jalgratas", "ratas", "suusad", "rulluisud",
+        "sporditarbed", "treening", "pall"
+    ],
+    "Kodutehnika": [
+        "televiisor", "teler", "külmkapp", "pesumasin",
+        "mikrolaineahi", "tolmuimeja", "tehnika"
+    ],
+    "Kontor ja kool": [
+        "arvuti", "monitor", "printer", "kirjutuslaud",
+        "koolikott", "õpik", "kontoritool"
+    ],
+    "Riided ja jalatsid": [
+        "riided", "jope", "mantel", "jalanõud",
+        "jalatsid", "kingad", "püksid"
+    ],
+    "Ehitusmaterjalid": [
+        "ehitusmaterjal", "lauad", "puit", "värv",
+        "plaat", "tsement", "tööriist"
+    ],
+    "Lastekaubad": [
+        "lapsevanker", "beebivoodi", "lastekaup",
+        "mänguasi", "lasteriided", "turvatool"
+    ],
+    "Aed ja taimed": [
+        "taim", "lill", "muld", "muru",
+        "aiatöö", "istik", "potid"
     ]
-    
-    # Genereerime dünaamiliselt üle 150 unikaalse kirje
-    for i in range(6, 161):
-        cat = categories[i % len(categories)]
-        loc = locations[i % len(locations)]
-        raw_posts.append({
-            "title": f"Tasuta {cat.lower()} #{i} ({loc.split(',')[0]})",
-            "description": f"Kontrollitud kuulutus #{i} otse grupist TasutaAsjad. Ese on täiesti tasuta, heas korras ja ootab uut omanikku.",
-            "image": images[i % len(images)],
-            "category": cat,
-            "location": loc,
-            "date": "Aktiivne"
-        })
+}
 
-    # Krüptograafiline dublikaatide eemaldamine ja otse-otsingu URL-ide genereerimine
-    seen_hashes = set()
-    unique_posts = []
-    for post in raw_posts:
-        title_hash = hashlib.md5(post["title"].encode('utf-8')).hexdigest()
-        if title_hash not in seen_hashes:
-            seen_hashes.add(title_hash)
-            query_str = urllib.parse.quote(post["title"])
-            post["link"] = f"{TARGET_GROUP_URL}/search/?q={query_str}"
-            unique_posts.append(post)
-            
-    return unique_posts
+LOCATION_RULES = {
+    "Tallinn, Kesklinn": ["kesklinn"],
+    "Tallinn, Mustamäe": ["mustamäe", "mustamäel"],
+    "Tallinn, Õismäe": ["õismäe", "haabersti"],
+    "Tallinn, Lasnamäe": ["lasnamäe"],
+    "Tallinn, Nõmme": ["nõmme", "nõmmel"],
+    "Tallinn, Kristiine": ["kristiine"],
+    "Tallinn, Pirita": ["pirita"],
+    "Harjumaa, Viimsi": ["viimsi"],
+    "Harjumaa, Maardu": ["maardu"],
+    "Harjumaa, Keila": ["keila"],
+    "Harjumaa, Saue": ["saue"],
+    "Harjumaa, Rae": ["rae", "jüri"],
+    "Harjumaa, Saku": ["saku"],
+    "Harjumaa, Harku": ["harku", "tabasalu"]
+}
 
-master_posts = load_enterprise_database()
 
-# Sidebar juhtpaneel ja filtrid
+def detect_category(text):
+    text = text.lower()
+
+    for category, keywords in CATEGORY_RULES.items():
+        if any(keyword in text for keyword in keywords):
+            return category
+
+    return "Muu / määramata"
+
+
+def detect_location(text):
+    text = text.lower()
+
+    for location, keywords in LOCATION_RULES.items():
+        if any(keyword in text for keyword in keywords):
+            return location
+
+    if "tallinn" in text:
+        return "Tallinn, määramata piirkond"
+
+    if "harjumaa" in text:
+        return "Harjumaa, määramata piirkond"
+
+    return "Asukoht määramata"
+
+
+# -----------------------------------------------------------------------------
+# DATE PARSING
+# -----------------------------------------------------------------------------
+
+def parse_date(entry):
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+
+    if parsed:
+        try:
+            dt = datetime(
+                *parsed[:6],
+                tzinfo=timezone.utc
+            )
+            return dt.astimezone(LOCAL_TZ)
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+    return None
+
+
+# -----------------------------------------------------------------------------
+# RSS / ATOM FETCH ENGINE
+# -----------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_feed(feed_url):
+    if not valid_http_url(feed_url):
+        return [], "RSS-aadress puudub või ei ole korrektne.", ""
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; TasutaAsjadPro/2.0; "
+            "+https://streamlit.io)"
+        ),
+        "Accept": (
+            "application/rss+xml, application/atom+xml, "
+            "application/xml, text/xml, */*"
+        )
+    }
+
+    try:
+        response = requests.get(
+            feed_url,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT
+        )
+
+        response.raise_for_status()
+
+        parsed_feed = feedparser.parse(response.content)
+
+        entries = parsed_feed.entries[:MAX_POSTS]
+
+        if not entries:
+            return [], (
+                "Andmevoog ei tagastanud ühtegi kuulutust. "
+                "Kontrolli RSS-aadressi ja selle ligipääsu."
+            ), parsed_feed.feed.get("title", "")
+
+        posts = []
+        seen = set()
+
+        for entry in entries:
+            title = clean_html(entry.get("title", ""))
+
+            description_html = (
+                entry.get("summary")
+                or entry.get("description")
+                or ""
+            )
+
+            if not description_html and entry.get("content"):
+                description_html = entry["content"][0].get("value", "")
+
+            description = clean_html(description_html)
+
+            if not title:
+                continue
+
+            original_link = entry.get("link", "").strip()
+            entry_id = entry.get("id", "").strip()
+
+            # Prefer the actual post URL or feed ID
+            identity = (
+                original_link
+                or entry_id
+                or f"{title}|{entry.get('published', '')}"
+            )
+
+            fingerprint = hashlib.sha256(
+                identity.encode("utf-8")
+            ).hexdigest()
+
+            if fingerprint in seen:
+                continue
+
+            seen.add(fingerprint)
+
+            combined_text = f"{title} {description}"
+
+            post_date = parse_date(entry)
+
+            image_url = extract_image(entry)
+
+            posts.append({
+                "id": fingerprint,
+                "title": title,
+                "description": description,
+                "image": image_url,
+                "category": detect_category(combined_text),
+                "location": detect_location(combined_text),
+                "date": post_date,
+                "link": original_link if valid_http_url(original_link) else "",
+                "source": parsed_feed.feed.get("title", "RSS"),
+            })
+
+        posts.sort(
+            key=lambda p: p["date"] or datetime.min.replace(
+                tzinfo=LOCAL_TZ
+            ),
+            reverse=True
+        )
+
+        return posts, "", parsed_feed.feed.get("title", "RSS")
+
+    except requests.exceptions.Timeout:
+        return [], "Andmevoo päring aegus. Proovi uuesti.", ""
+
+    except requests.exceptions.HTTPError as exc:
+        return [], f"Andmeallika HTTP viga: {exc}", ""
+
+    except requests.exceptions.RequestException as exc:
+        logger.exception("RSS connection error")
+        return [], f"Ühenduse viga: {exc}", ""
+
+    except Exception:
+        logger.exception("Unexpected feed parsing error")
+        return [], "Andmevoo töötlemisel tekkis ootamatu viga.", ""
+
+
+# -----------------------------------------------------------------------------
+# SESSION STATE
+# -----------------------------------------------------------------------------
+
+if "visible_count" not in st.session_state:
+    st.session_state.visible_count = 25
+
+
+# -----------------------------------------------------------------------------
+# SIDEBAR
+# -----------------------------------------------------------------------------
+
 with st.sidebar:
-    st.markdown("### ⚙️ Juhtpaneel & Haldus")
-    st.success(f"Grupp: TasutaAsjad\nKirjeid kokku: {len(master_posts)}")
-    
-    search_query = st.text_input("🔍 Otsi kuulutustest:", placeholder="Märksõna...")
-    
-    category_filter = st.selectbox(
-        "📂 Kategooria:",
-        ["Kõik kategooriad"] + sorted(list(set(p["category"] for p in master_posts)))
+    st.markdown("## ⚙️ Juhtpaneel")
+
+    st.markdown("### 📡 Andmeallikas")
+
+    feed_url = st.text_input(
+        "RSS / Atom URL",
+        value=DEFAULT_FEED_URL,
+        placeholder="https://example.com/feed.xml",
+        help="Sisesta Facebooki grupi postitusi vahendava teenuse RSS-aadress."
+    ).strip()
+
+    st.markdown(
+        f"[Ava Facebooki grupp ↗]({GROUP_URL})"
     )
-    
-    location_filter = st.selectbox(
-        "📍 Piirkond:",
-        ["Kõik piirkonnad"] + sorted(list(set(p["location"] for p in master_posts)))
-    )
-    
-    st.markdown("---")
-    if st.button("🔄 Lähtesta ja uuenda"):
+
+    st.divider()
+
+    if st.button("🔄 Värskenda andmeid", use_container_width=True):
         st.cache_data.clear()
+        st.session_state.visible_count = 25
         st.rerun()
 
-# Lehe päis
+    st.markdown("### 🔎 Otsing")
+
+    search_query = st.text_input(
+        "Märksõna",
+        placeholder="Näiteks diivan, jalgratas..."
+    ).strip().lower()
+
+    st.markdown("### 📂 Kategooria")
+
+    categories = ["Kõik kategooriad"] + list(CATEGORY_RULES.keys()) + [
+        "Muu / määramata"
+    ]
+
+    category_filter = st.selectbox(
+        "Vali kategooria",
+        categories
+    )
+
+    st.markdown("### 📍 Piirkond")
+
+    location_filter = st.selectbox(
+        "Vali piirkond",
+        ["Kõik piirkonnad"] + list(LOCATION_RULES.keys()) + [
+            "Tallinn, määramata piirkond",
+            "Harjumaa, määramata piirkond",
+            "Asukoht määramata"
+        ]
+    )
+
+    st.divider()
+
+    st.caption(
+        "Andmeid uuendatakse automaatselt iga 5 minuti järel "
+        "uue päringu korral."
+    )
+
+
+# -----------------------------------------------------------------------------
+# MAIN HEADER
+# -----------------------------------------------------------------------------
+
 st.title(f"{APP_ICON} {APP_TITLE}")
-st.markdown(f"Eksklusiivne otsevoog grupist: **[TasutaAsjad]({TARGET_GROUP_URL})**. Null dublikaati. Optimeeritud tippkiiruseks.")
-st.markdown("---")
 
-# Filtreerimismootor
-@st.cache_data(show_spinner=False)
-def filter_posts(posts, category, location, query):
-    filtered = posts
-    if category != "Kõik kategooriad":
-        filtered = [p for p in filtered if p["category"] == category]
-    if location != "Kõik piirkonnad":
-        filtered = [p for p in filtered if p["location"] == location]
-    if query:
-        q = query.lower()
-        filtered = [p for p in filtered if q in p["title"].lower() or q in p["description"].lower()]
-    return filtered
+st.markdown(
+    f"""
+    Päris kuulutused Facebooki grupist
+    **[TasutaAsjad ↗]({GROUP_URL})**.
+    
+    Otsi tasuta mööblit, tehnikat, riideid, lasteasju ja palju muud.
+    """
+)
 
-filtered_posts = filter_posts(master_posts, category_filter, location_filter, search_query)
+st.divider()
 
-# Tulemuste kuvamine
-st.success(f"Kuvatakse {len(filtered_posts)} aktiivset eset.")
-st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# LOAD DATA
+# -----------------------------------------------------------------------------
+
+if not feed_url:
+    st.warning(
+        "📡 Andmeallikas on seadistamata. Lisa vasakule "
+        "külgpaneelile toimiv RSS/Atom-aadress."
+    )
+
+    st.info(
+        "Facebooki grupi URL ei ole RSS-voog. Vajad eraldi "
+        "andmevoogu, mis vahendab grupi päris avalikke postitusi."
+    )
+
+    st.link_button(
+        "Ava Facebooki grupp",
+        GROUP_URL
+    )
+
+    st.stop()
+
+
+with st.spinner("Laen tegelikke kuulutusi..."):
+    master_posts, feed_error, feed_title = load_feed(feed_url)
+
+
+# -----------------------------------------------------------------------------
+# SOURCE STATUS
+# -----------------------------------------------------------------------------
+
+if feed_error:
+    st.error(f"⚠️ {feed_error}")
+
+    st.link_button(
+        "Ava Facebooki grupp",
+        GROUP_URL
+    )
+
+    st.stop()
+
+
+# -----------------------------------------------------------------------------
+# FILTERING
+# -----------------------------------------------------------------------------
+
+filtered_posts = []
+
+for post in master_posts:
+
+    if (
+        category_filter != "Kõik kategooriad"
+        and post["category"] != category_filter
+    ):
+        continue
+
+    if (
+        location_filter != "Kõik piirkonnad"
+        and post["location"] != location_filter
+    ):
+        continue
+
+    if search_query:
+        searchable = (
+            post["title"] + " " + post["description"]
+        ).lower()
+
+        if search_query not in searchable:
+            continue
+
+    filtered_posts.append(post)
+
+
+# -----------------------------------------------------------------------------
+# STATISTICS
+# -----------------------------------------------------------------------------
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric(
+    "📦 Päris kuulutusi",
+    len(master_posts)
+)
+
+col2.metric(
+    "🔎 Otsingu tulemused",
+    len(filtered_posts)
+)
+
+col3.metric(
+    "📡 Andmeallikas",
+    "Ühendatud"
+)
+
+st.caption(
+    f"Allikas: {feed_title or 'RSS / Atom'} · "
+    f"Viimane päring: {datetime.now(LOCAL_TZ).strftime('%d.%m.%Y %H:%M')}"
+)
+
+st.divider()
+
+
+# -----------------------------------------------------------------------------
+# RESULTS
+# -----------------------------------------------------------------------------
 
 if not filtered_posts:
-    st.warning("Otsingule vastavaid postitusi ei leitud.")
+
+    st.info(
+        "Sellele otsingule vastavaid päris kuulutusi ei leitud."
+    )
+
 else:
-    col1, col2 = st.columns(2)
-    for index, post in enumerate(filtered_posts):
-        target_col = col1 if index % 2 == 0 else col2
-        with target_col:
-            with st.container():
+
+    display_count = min(
+        st.session_state.visible_count,
+        len(filtered_posts)
+    )
+
+    visible_posts = filtered_posts[:display_count]
+
+    st.markdown(
+        f"### Leitud kuulutused ({len(filtered_posts)})"
+    )
+
+    columns = st.columns(2)
+
+    for index, post in enumerate(visible_posts):
+
+        with columns[index % 2]:
+
+            with st.container(border=True):
+
                 st.markdown(
-                    f"""
-                    <div class="stCard">
-                        <div class="badge-group">🟢 TasutaAsjad Grupp</div>
-                        <h3 style="margin-bottom: 10px; font-size: 20px;">{post['title']}</h3>
-                        <p style="color: #6c757d; font-size: 13px; margin-bottom: 15px;">📂 <b>{post['category']}</b> | 📍 <b>{post['location']}</b> | 📅 <b>{post['date']}</b></p>
-                    """,
+                    f"<div class='listing-title'>{post['title']}</div>",
                     unsafe_allow_html=True
                 )
-                
-                if post.get("image"):
-                    st.image(post["image"], use_container_width=True)
-                    
-                st.write(post["description"])
-                
-                if post.get("link"):
-                    st.markdown(f"[🔗 Ava otsing TasutaAsjad grupis]({post['link']})")
-                    
-                st.markdown("</div>", unsafe_allow_html=True)
 
-# Jaluse info
+                date_text = (
+                    post["date"].strftime("%d.%m.%Y %H:%M")
+                    if post["date"]
+                    else "Kuupäev teadmata"
+                )
+
+                st.caption(
+                    f"📂 {post['category']}  ·  "
+                    f"📍 {post['location']}  ·  "
+                    f"🕒 {date_text}"
+                )
+
+                if post["image"]:
+                    try:
+                        st.image(
+                            post["image"],
+                            use_container_width=True
+                        )
+                    except Exception:
+                        st.caption("Pilt ei ole hetkel kättesaadav.")
+
+                if post["description"]:
+                    st.write(post["description"])
+
+                if post["link"]:
+                    st.markdown(
+                        f"[🔗 Ava konkreetne kuulutus ↗]({post['link']})"
+                    )
+                else:
+                    st.caption(
+                        "Konkreetse postituse link puudub andmevoos."
+                    )
+
+
+    # -------------------------------------------------------------------------
+    # PAGINATION
+    # -------------------------------------------------------------------------
+
+    if display_count < len(filtered_posts):
+
+        st.divider()
+
+        if st.button(
+            "⬇️ Näita veel 25 kuulutust",
+            use_container_width=True
+        ):
+            st.session_state.visible_count += 25
+            st.rerun()
+
+    elif len(filtered_posts) > 25:
+
+        st.caption("Kõik leitud kuulutused on kuvatud.")
+
+
+# -----------------------------------------------------------------------------
+# FOOTER
+# -----------------------------------------------------------------------------
+
 st.markdown(
     """
-    <div class="footer-text">
-        <b>Tasuta Asjad Enterprise Edition v4000.0</b> | 100% Production Ready.
+    <div class="status-footer">
+        <b>📦 Tasuta Asjad Pro</b><br>
+        Päris andmed · Duplikaatide eemaldamine ·
+        Automaatne värskendamine<br>
+        Andmed pärinevad ühendatud RSS / Atom andmeallikast.
     </div>
     """,
     unsafe_allow_html=True
