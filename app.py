@@ -3,30 +3,34 @@ import feedparser
 
 st.set_page_config(page_title="Tasuta Asjad Feed", page_icon="📦", layout="centered")
 
-st.title("📦 Tasuta Asjad Harjumaal & Tallinnas")
-st.write("Automaatne Facebooki grupi postituste voog.")
+st.title("📦 Tasuta Asjad Facebooki Grupp")
+st.write("Reaalajas uuenev voog otse RSS-failist.")
 
-# Siia kleepige oma feed.xml täpne Raw link
 RSS_URL = "https://raw.githubusercontent.com/ebrmarkus-lgtm/fb-rss-feed/main/feed.xml"
 
 try:
     feed = feedparser.parse(RSS_URL)
     
-    # Kuvame silumiseks info otse lehel
-    st.write(f"Loetud URL: `{RSS_URL}`")
-    st.write(f"Leitud postituste arv: {len(feed.entries)}")
-    
     if feed.entries:
-        st.success("Voog on edukalt laetud!")
+        st.success(f"Leiti {len(feed.entries)} postitust.")
+        st.markdown("---")
+        
         for entry in feed.entries:
             st.subheader(entry.get("title", "Pealkirjata"))
+            
+            published = entry.get("published", "")
+            if published:
+                st.caption(f"📅 Avaldatud: {published}")
+                
             st.write(entry.get("description", "Sisu puudub"))
+            
             link = entry.get("link")
             if link:
-                st.markdown(f"[🔗 Ava link]({link})")
+                st.markdown(f"[🔗 Ava Facebookis]({link})")
+                
             st.markdown("---")
     else:
-        st.warning("Feed on tühi või seda ei õnnestunud lugeda.")
+        st.info("Voog on hetkel tühi.")
         
 except Exception as e:
-    st.error(f"Tekkis viga: {e}")
+    st.error(f"Tekkis viga voo laadimisel: {e}")
