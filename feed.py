@@ -11,10 +11,12 @@ def generate_rss():
         language="et",
     )
 
+    # Siia saate lisada oma grupi reaalsed postitused ja nende otselingid
+    # Iga uus postitus käib niiviisi:
     feed.add_item(
-        title="Ühendus on edukalt loodud!",
-        link=GROUP_URL,
-        description="See on automaatselt genereeritud XML-voo testkirje, mis kinnitab süsteemi toimimist.",
+        title="Näiteks: Ära anname diivani Tallinnas",
+        link="https://www.facebook.com/groups/TasutaAsjad/permalink/123456789/", # Siia pange konkreetse postituse link
+        description="Heas korras diivan ära anda, ise järele tulla.",
         pubDate=datetime.now(),
     )
 
