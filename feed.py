@@ -1,7 +1,6 @@
 from datetime import datetime
 import feedgenerator
 
-# Kasutame teie soovitud õiget grupi aadressi
 GROUP_URL = "https://www.facebook.com/groups/TasutaAsjad"
 
 def generate_rss():
@@ -12,11 +11,10 @@ def generate_rss():
         language="et",
     )
 
-    # Lisame toimiva näidispostituse, kuni loome edasisi lahendusi
     feed.add_item(
         title="Ühendus on edukalt loodud!",
         link=GROUP_URL,
-        description="See on automaatselt genereeritud XML-voo testkirje. Grupi lingiks on nüüd määratud TasutaAsjad.",
+        description="See on automaatselt genereeritud XML-voo testkirje, mis kinnitab süsteemi toimimist.",
         pubDate=datetime.now(),
     )
 
