@@ -17,20 +17,13 @@ try:
         
         for entry in feed.entries:
             st.subheader(entry.get("title", "Pealkirjata"))
-            
-            published = entry.get("published", "")
-            if published:
-                st.caption(f"📅 Avaldatud: {published}")
-                
             st.write(entry.get("description", "Sisu puudub"))
-            
             link = entry.get("link")
             if link:
                 st.markdown(f"[🔗 Ava Facebookis]({link})")
-                
             st.markdown("---")
     else:
         st.info("Voog on hetkel tühi.")
         
 except Exception as e:
-    st.error(f"Tekkis viga voo laadimisel: {e}")
+    st.error(f"Tekkis viga: {e}")
