@@ -7,16 +7,16 @@ def generate_rss():
     feed = feedgenerator.Rss201rev2Feed(
         title="Tasuta Asjad Facebooki Grupp",
         link=GROUP_URL,
-        description="Automaatselt uuenev voog Facebooki grupist (viimased 48h)",
+        description="Automaatselt uuenev voog Facebooki grupist",
         language="et",
     )
 
-    # Lisame näidistena toimivad kirjed, et näeksite kohe mitme postituse kuvamist
+    # Loome 5 testpostitust, et näeksite mitut erinevat elementi lehel
     for i in range(1, 6):
         feed.add_item(
-            title=f"Tasuta asi nr {i} - Vaata pakkumist",
-            link=f"{GROUP_URL}/permalink/100000{i}/",
-            description=f"See on automaatselt genereeritud kirjeldus ja info toote nr {i} kohta grupis TasutaAsjad.",
+            title=f"Tasuta asi nr {i} - Pakkumine",
+            link=f"{GROUP_URL}/permalink/1000{i}/",
+            description=f"See on automaatne kirje nr {i} grupis TasutaAsjad. Ese on heas korras.",
             pubDate=datetime.now(),
         )
 
